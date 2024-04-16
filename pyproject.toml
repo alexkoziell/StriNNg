@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "StriNNg"
+version = "0.0.1"
+authors = [
+  { name="Alex Koziell-Pipe", email="alex.koziellpipe@gmail.com" },
+]
+description = "Neural networks with string diagrammatic denotational semantics."
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+development = [ "pre-commit >= 3.3.3" ]
+
+[project.urls]
+"Homepage" = "https://github.com/alexkoziell/StriNNg"
+"Bug Tracker" = "https://github.com/alexkoziell/StriNNg/issues"
