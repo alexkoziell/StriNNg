@@ -15,6 +15,7 @@
 from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
+import itertools
 
 import torch
 import torch.nn as nn
@@ -28,12 +29,12 @@ class Vertex:
     a spider (multi-wire) in a string diagram.
     """
 
-    size: torch.Size
-    """The tensor shape of values this spider carries."""
+    size: torch.Size | None = None
+    """The tensor shape of values this vertex carries."""
     sources: set[int] = field(default_factory=set)
-    """A set of integer identifiers for boxes this spdier is an output of."""
+    """A set of integer identifiers for hyperedges this vertex is an output of."""
     targets: set[int] = field(default_factory=set)
-    """A set of integer identifiers for boxes this spdier is an input of."""
+    """A set of integer identifiers for hyperedges this vertex is an input of."""
     cached_value: torch.Tensor | None = None
     """A cached value for monitoring activations."""
 
@@ -213,6 +214,10 @@ class Hypergraph:
 
         return composed
 
+    def __matmul__(self, other: Hypergraph) -> Hypergraph:
+        """Parallel compose with `other`."""
+        return self.parallel_comp(other)
+
     def sequential_comp(self, other: Hypergraph,
                         in_place: bool = False) -> Hypergraph:
         """Compose this hypergraph in sequence with `other`.
@@ -278,6 +283,10 @@ class Hypergraph:
             composed.add_edge(copied_edge)
 
         return composed
+
+    def __rshift__(self, other: Hypergraph) -> Hypergraph:
+        """Sequentially compose with `other`."""
+        return self.sequential_comp(other)
 
     def insert_identity_after(self, vertex_id: int) -> int:
         """Add an identity hyperedge after a vertex in the hypergraph.
@@ -878,3 +887,57 @@ class Hypergraph:
                 self.vertices[t].cached_value = ys[i]
 
         return [self.vertices[o].cached_value for o in self.outputs]
+
+    def __call__(self, *xs: torch.Tensor) -> list[torch.Tensor | None]:
+        """Perform a forward pass on `xs`."""
+        return self.forward(*xs)
+
+    def merge_vertices(self, v1: int, v2: int) -> None:
+        """Merge vertex `v2` into `v1`."""
+        vertex_to_remove = self.vertices[v2]
+        sources = vertex_to_remove.sources
+        targets = vertex_to_remove.targets
+        for source in sources:
+            edge = self.edges[source]
+            edge.targets = [v1 if v == v2 else v
+                            for v in edge.targets]
+        for target in targets:
+            edge = self.edges[target]
+            edge.sources = [v1 if v == v2 else v
+                            for v in edge.sources]
+        merged_vertex = self.vertices[v1]
+        merged_vertex.sources.update(sources)
+        merged_vertex.targets.update(targets)
+
+        self.inputs = [v1 if v == v2 else v
+                       for v in self.inputs]
+        self.outputs = [v1 if v == v2 else v
+                        for v in self.outputs]
+
+        self.vertices.pop(v2)
+
+    def connect_edges(self,
+                      eid_1: int, eid_2: int,
+                      idx_1: int, idx_2: int,
+                      size: torch.Size) -> None:
+        """Connect two modules by a wire."""
+        edge_1 = self.edges[eid_1]
+        edge_2 = self.edges[eid_2]
+        vertex = self.add_vertex(
+            Vertex(size,
+                   {eid_1},
+                   {eid_2}))
+        edge_1.targets[idx_1] = vertex
+        edge_2.sources[idx_2] = vertex
+
+    def train(self) -> None:
+        """Sets up model for training."""
+        for edge in self.edges.values():
+            edge.module.train()
+
+    def parameters(self):
+        """Return model parameters"""
+        return itertools.chain(
+            *[edge.module.parameters()
+              for edge in self.edges.values()]
+        )
