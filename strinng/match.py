@@ -17,6 +17,7 @@ from copy import deepcopy
 from typing import Iterable, Iterator
 
 from strinng.hypergraph import Hypergraph
+from strinng.rule import Rule
 
 
 class Match:

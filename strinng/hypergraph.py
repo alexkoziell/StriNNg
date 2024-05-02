@@ -16,6 +16,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 import itertools
+from typing import Iterable
 
 import torch
 import torch.nn as nn
@@ -257,7 +258,7 @@ class Hypergraph:
         """Return whether a vertex lies on the boundary."""
         return vertex_id in self.inputs + self.outputs
 
-    def successors(self, *vertices: int) -> set[int]:
+    def successors(self, vertices: Iterable[int]) -> set[int]:
         """Return vertices that lie on a directed path from those provided.
 
         Args:
