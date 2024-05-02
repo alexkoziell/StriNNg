@@ -1,4 +1,4 @@
-#    Copyright 2023 Alexander Koziell-Pipe
+#    Copyright 2024 Alexander Koziell-Pipe
 
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -32,9 +32,9 @@ class Vertex:
     size: torch.Size | None = None
     """The tensor shape of values this vertex carries."""
     sources: set[int] = field(default_factory=set)
-    """A set of integer identifiers for hyperedges this vertex is an output of."""
+    """A set of integer identifiers for source hyperedges."""
     targets: set[int] = field(default_factory=set)
-    """A set of integer identifiers for hyperedges this vertex is an input of."""
+    """A set of integer identifiers for target hyperedges."""
     cached_value: torch.Tensor | None = None
     """A cached value for monitoring activations."""
 
@@ -111,6 +111,76 @@ class Hypergraph:
         self.vertices[vertex_id] = vertex
         return vertex_id
 
+    def remove_vertex(self, vertex_id: int) -> None:
+        """Remove a vertex from the hypergraph."""
+        vertex = self.vertices.pop(vertex_id)
+        for edge in vertex.sources:
+            self.edges[edge].targets = [v for v in self.edges[edge].targets
+                                        if v != vertex_id]
+        for edge in vertex.targets:
+            self.edges[edge].sources = [v for v in self.edges[edge].sources
+                                        if v != vertex_id]
+        self.inputs = [i for i in self.inputs if i != vertex_id]
+        self.outputs = [o for o in self.outputs if o != vertex_id]
+
+    def explode_vertex(self, vertex_id: int) -> tuple[list[int], list[int]]:
+        """Split a vertex into copies for each input, output and wire."""
+        new_vertices: tuple[list[int], list[int]] = ([], [])
+        vertex = self.vertices[vertex_id]
+        
+        def fresh(j: int) -> int:
+            """Creates a new vertex with the same data as `v`.
+
+            The integer identifier of the new vertex is recorded in either
+            the list of new input-like vertices or the list of new output-like
+            vertices, depending on the value of `j`.
+
+            Args:
+                j: If 0, the new vertex is added to the list of new input-like
+                   vertices. If 1, the new vertex is added to the list of
+                   new output-like vertices.
+            """
+            v1 = self.add_vertex(deepcopy(vertex))
+            new_vertices[j].append(v1)
+            return v1
+
+        # Replace any occurences of the original vertex in the graph inputs
+        # with a new input-like vertex.
+        self.inputs = [v if v != vertex_id else fresh(0)
+                       for v in self.inputs]
+        # Where the original vertex is the target of a hyperedge, replace its
+        # occurence in the hyperedge's target list with a new input-like
+        # vertex and register this with the new vertex's data instance.
+        for edge_id in vertex.sources:
+            edge = self.edges[edge_id]
+            for i in range(len(edge.targets)):
+                if edge.targets[i] == vertex:
+                    edge.targets[i] = fresh(0)
+                    self.vertices[edge.targets[i]].sources.add(edge_id)
+
+        # Replace any occurences of the original vertex in the graph outputs
+        # with a new output-like vertex.
+        self.outputs = [v if v != vertex else fresh(1)
+                        for v in self.outputs]
+        # Where the original vertex is the source of a hyperedge, replace its
+        # occurence in the hyperedge's target list with a new output-like
+        # vertex and register this with the new vertex's data instance.
+        for edge_id in vertex.targets:
+            edge = self.edges[edge_id]
+            for i in range(len(edge.sources)):
+                if edge.sources[i] == vertex:
+                    edge.sources[i] = fresh(1)
+                    self.vertices[edge.sources[i]].targets.add(edge_id)
+
+        # Register the fact that `vertex` no longer occurs in as a source or
+        # target of any hyperedge.
+        vertex.sources = set()
+        vertex.targets = set()
+
+        self.remove_vertex(vertex_id)
+
+        return new_vertices
+
     def add_edge(self, edge: Hyperedge) -> int:
         """Add a new hyperedge to the hypergraph.
 
@@ -153,6 +223,14 @@ class Hypergraph:
 
         return edge_id
 
+    def remove_edge(self, edge_id: int) -> None:
+        """Remove an edge from the hypergraph."""
+        edge = self.edges.pop(edge_id)
+        for source in edge.sources:
+            self.vertices[source].targets.remove(edge_id)
+        for target in edge.targets:
+            self.vertices[target].sources.remove(edge_id)
+
     def add_connection(self, edge_id: int, vertex_id: int,
                        port_num: int, is_input: bool) -> None:
         """Connect a vertex to an edge."""
@@ -166,6 +244,35 @@ class Hypergraph:
                 raise ValueError('Already connected.')
             self.edges[edge_id].targets[port_num] = vertex_id
             self.vertices[vertex_id].sources.add(edge_id)
+
+    def domain(self) -> list[torch.Size | None]:
+        """Return the input type of the hypergraph."""
+        return [self.vertices[i].size for i in self.inputs]
+
+    def codomain(self) -> list[torch.Size | None]:
+        """Return the output type of the hypergraph."""
+        return [self.vertices[o].size for o in self.outputs]
+
+    def is_boundary(self, vertex_id: int) -> bool:
+        """Return whether a vertex lies on the boundary."""
+        return vertex_id in self.inputs + self.outputs
+
+    def successors(self, *vertices: int) -> set[int]:
+        """Return vertices that lie on a directed path from those provided.
+
+        Args:
+            vertices: identifiers of the vertices to find successors of.
+        """
+        successors: set[int] = set()
+        current = list(vertices)
+        while len(current) > 0:
+            vertex = current.pop()
+            for edge in self.vertices[vertex].targets:
+                for target in self.edges[edge].targets:
+                    if target not in successors:
+                        successors.add(target)
+                        current.append(target)
+        return successors
 
     def parallel_comp(self, other: Hypergraph,
                       in_place: bool = False) -> Hypergraph:
