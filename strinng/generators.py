@@ -14,9 +14,43 @@
 """Commonly used PyTorch modules."""
 from copy import deepcopy
 
+import torch
 import torch.nn as nn
 
 from strinng.hypergraph import Hyperedge, Hypergraph, Vertex
+
+
+class NeuronAggregator(nn.Module):
+    """The input aggregator of a neuron."""
+    def __init__(self, n_in: int) -> None:
+        super().__init__()
+        weights = torch.randn(n_in)
+        self.weights = nn.Parameter(weights)
+
+    def forward(self, x):
+        return self.weights @ x
+
+    def _get_name(self):
+        return '+'
+
+
+def create_neuron(n_in: int, act_fn=None) -> Hypergraph:
+    neuron = Hypergraph()
+    neuron.inputs = [neuron.add_vertex(Vertex())
+                     for _ in range(n_in)]
+    neuron.outputs = [neuron.add_vertex(Vertex())]
+    agg = neuron.add_edge(Hyperedge(NeuronAggregator(n_in),
+                                    neuron.inputs.copy(), [None]))
+    if act_fn is None:
+        neuron.add_connection(agg, neuron.outputs[0],
+                              0, False)
+    else:
+        v = neuron.add_vertex(Vertex())
+        neuron.add_connection(agg, v,
+                              0, False)
+        neuron.add_edge(Hyperedge(act_fn, [v],
+                                  neuron.outputs.copy()))
+    return neuron
 
 
 class Linear(Hypergraph):
@@ -72,7 +106,7 @@ def add_loss(network: Hypergraph, loss: Hypergraph) -> Hypergraph:
     return network >> loss
 
 
-class Add(nn.Module):
+class Sum(nn.Module):
     def forward(self, *xs):
         return sum(xs)
 
@@ -80,7 +114,7 @@ class Add(nn.Module):
         return '+'
 
 
-add = Add()
+sum_module = Sum()
 
 
 def add_residual(network: Hypergraph) -> Hypergraph:
@@ -89,7 +123,7 @@ def add_residual(network: Hypergraph) -> Hypergraph:
     new_output = network.add_vertex(Vertex())
 
     network.add_edge(
-        Hyperedge(add,
+        Hyperedge(sum_module,
                   network.outputs + network.inputs,
                   [new_output])
     )
