@@ -341,7 +341,7 @@ class Hypergraph:
         Returns:
             composed: The sequential composition of `self` with `other`.
         """
-        if n_out := len(self.outputs) != (n_in := len(other.inputs)):
+        if (n_out := len(self.outputs)) != (n_in := len(other.inputs)):
             raise ValueError(
                 f'Cannot sequentially compose hypergraph with {n_out} outputs'
                 + f'with one with {n_in} inputs.'

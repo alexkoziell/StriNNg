@@ -13,6 +13,7 @@
 #    limitations under the License.
 """Commonly used PyTorch modules."""
 from copy import deepcopy
+from functools import reduce
 
 import torch
 import torch.nn as nn
@@ -51,6 +52,26 @@ def create_neuron(n_in: int, act_fn=None) -> Hypergraph:
         neuron.add_edge(Hyperedge(act_fn, [v],
                                   neuron.outputs.copy()))
     return neuron
+
+
+def create_fully_connected(n_in: int, n_neurons: int,
+                           act_fn=None) -> Hypergraph:
+    """Return a fully connected layer."""
+    # Create the neurons in the fully connected layer
+    neurons = [create_neuron(n_in, act_fn) for _ in range(n_neurons)]
+    layer = reduce(lambda x, y: x @ y, neurons)
+    # Inputs from the previous layer are sent to mulitple neurons
+    # in the fully connected layer, therefore inputs between neurons
+    # correspond to the same value. Hence we merge them.
+    to_merge = []
+    for i in range(n_in):
+        for j in range(1, n_neurons):
+            to_merge.append((layer.inputs[i], layer.inputs[i + n_in * j]))
+    for v1, v2 in to_merge:
+        layer.merge_vertices(v1, v2)
+    layer.inputs = layer.inputs[:n_in]
+
+    return layer
 
 
 class Linear(Hypergraph):
