@@ -13,7 +13,6 @@
 #    limitations under the License.
 """Commonly used PyTorch modules."""
 from copy import deepcopy
-from functools import reduce
 
 import torch
 import torch.nn as nn
@@ -21,18 +20,23 @@ import torch.nn as nn
 from strinng.hypergraph import Hyperedge, Hypergraph, Vertex
 
 
-class NeuronAggregator(nn.Module):
-    """The input aggregator of a neuron."""
-    def __init__(self, n_in: int) -> None:
+class Neuron(nn.Module):
+    """A single neuron."""
+    def __init__(self, n_in: int, act_fn=nn.Identity) -> None:
         super().__init__()
         weights = torch.randn(n_in)
         self.weights = nn.Parameter(weights)
+        self.act_fn = act_fn()
 
-    def forward(self, x):
-        return self.weights @ x
+    def forward(self, *xs):
+        x = torch.stack(xs)
+        if self.act_fn is None:
+            return self.weights @ x
+        return self.act_fn(self.weights @ x)
 
     def _get_name(self):
-        return '+'
+        return ('Neuron\nActivation=' +
+                f'{self.act_fn._get_name()}')
 
 
 def create_neuron(n_in: int, act_fn=None) -> Hypergraph:
@@ -40,68 +44,51 @@ def create_neuron(n_in: int, act_fn=None) -> Hypergraph:
     neuron.inputs = [neuron.add_vertex(Vertex())
                      for _ in range(n_in)]
     neuron.outputs = [neuron.add_vertex(Vertex())]
-    agg = neuron.add_edge(Hyperedge(NeuronAggregator(n_in),
-                                    neuron.inputs.copy(), [None]))
-    if act_fn is None:
-        neuron.add_connection(agg, neuron.outputs[0],
-                              0, False)
-    else:
-        v = neuron.add_vertex(Vertex())
-        neuron.add_connection(agg, v,
-                              0, False)
-        neuron.add_edge(Hyperedge(act_fn, [v],
-                                  neuron.outputs.copy()))
+    neuron.add_edge(Hyperedge(Neuron(n_in, act_fn),
+                              neuron.inputs.copy(), neuron.outputs.copy()))
     return neuron
 
 
 def create_fully_connected(n_in: int, n_neurons: int,
-                           act_fn=None) -> Hypergraph:
+                           act_fn=nn.Identity) -> Hypergraph:
     """Return a fully connected layer."""
+    layer = Hypergraph()
+    layer.inputs = [layer.add_vertex(Vertex())
+                    for _ in range(n_in)]
+    layer.outputs = [layer.add_vertex(Vertex())
+                     for _ in range(n_neurons)]
     # Create the neurons in the fully connected layer
-    neurons = [create_neuron(n_in, act_fn) for _ in range(n_neurons)]
-    layer = reduce(lambda x, y: x @ y, neurons)
-    # Inputs from the previous layer are sent to mulitple neurons
-    # in the fully connected layer, therefore inputs between neurons
-    # correspond to the same value. Hence we merge them.
-    to_merge = []
-    for i in range(n_in):
-        for j in range(1, n_neurons):
-            to_merge.append((layer.inputs[i], layer.inputs[i + n_in * j]))
-    for v1, v2 in to_merge:
-        layer.merge_vertices(v1, v2)
-    layer.inputs = layer.inputs[:n_in]
-
+    for i in range(n_neurons):
+        layer.add_edge(Hyperedge(Neuron(n_in, act_fn),
+                       layer.inputs.copy(), [layer.outputs[i]]))
     return layer
 
 
-class Linear(Hypergraph):
-    """A linear layer."""
-
-    def __init__(self,
-                 in_features: int, out_features: int,
-                 bias: bool = True) -> None:
-        super().__init__()
-        self.inputs = [self.add_vertex(Vertex())]
-        self.outputs = [self.add_vertex(Vertex())]
-        self.add_edge(
-            Hyperedge(nn.Linear(in_features, out_features, bias),
-                      self.inputs.copy(),
-                      self.outputs.copy())
-        )
+def create_flatten() -> Hypergraph:
+    """Return a flatten hypergraph."""
+    flatten = Hypergraph()
+    flatten.inputs = [flatten.add_vertex(Vertex())]
+    flatten.outputs = [flatten.add_vertex(Vertex())]
+    flatten.add_edge(
+        Hyperedge(nn.Flatten(),
+                  flatten.inputs.copy(),
+                  flatten.outputs.copy())
+    )
+    return flatten
 
 
-class Flatten(Hypergraph):
-    """A Flatten operation."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.inputs = [self.add_vertex(Vertex())]
-        self.outputs = [self.add_vertex(Vertex())]
-        self.add_edge(
-            Hyperedge(nn.Flatten(),
-                      self.inputs.copy(),
-                      self.outputs.copy())
-        )
+def create_linear(in_features: int, out_features: int,
+                  bias: bool = True) -> Hypergraph:
+    """Return a linear layer."""
+    linear = Hypergraph()
+    linear.inputs = [linear.add_vertex(Vertex())]
+    linear.outputs = [linear.add_vertex(Vertex())]
+    linear.add_edge(
+        Hyperedge(nn.Linear(in_features, out_features, bias),
+                  linear.inputs.copy(),
+                  linear.outputs.copy())
+    )
+    return linear
 
 
 class CrossEntropyLoss(Hypergraph):
