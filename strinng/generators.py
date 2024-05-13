@@ -24,8 +24,9 @@ class Neuron(nn.Module):
     """A single neuron."""
     def __init__(self, n_in: int, act_fn=nn.Identity) -> None:
         super().__init__()
-        weights = torch.randn(n_in)
-        self.weights = nn.Parameter(weights)
+        weights = torch.empty(1, n_in)
+        nn.init.kaiming_normal_(weights)
+        self.weights = nn.Parameter(weights.squeeze())
         self.act_fn = act_fn()
 
     def forward(self, *xs):
